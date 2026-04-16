@@ -1,35 +1,70 @@
 import requests
 import pandas as pd
 import time
-
-FRED_API_KEY = "33cfb977d2144be5a6e0e2db1e0a2fd2"
-BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
-
-def get_fred_annual(series_id, start="2010-01-01", end="2019-12-31"):
-    """Pull a FRED series and return annual averages."""
-    params = {
-        "series_id": series_id,
-        "api_key": FRED_API_KEY,
-        "file_type": "json",
-        "observation_start": start,
-        "observation_end": end
-    }
-    
-    response = requests.get(BASE_URL, params=params)
-    response.raise_for_status()
-    
-    observations = response.json()["observations"]
-    df = pd.DataFrame(observations)
-    df["value"] = pd.to_numeric(df["value"], errors="coerce")
-    df["year"] = pd.to_datetime(df["date"]).dt.year
-    
-    annual = df.groupby("year")["value"].mean().reset_index()
-    return annual
+import logging
+from datetime import datetime
 
 # ============================================================
-# STATE FIPS MAPPING (needed for some series)
+# LOGGING SETUP
 # ============================================================
-state_fips = {
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("logs/fred_data_collection.log"),
+        logging.StreamHandler() 
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# ============================================================
+# API KEY PROMPT
+# ============================================================
+def get_api_key():
+    """Prompt user for FRED API key and validate it."""
+    print("=" * 60)
+    print("FRED API Data Collection Script")
+    print("=" * 60)
+    print("\nA FRED API key is required to run this script.")
+    print("Get one free at: https://fred.stlouisfed.org/docs/api/api_key.html\n")
+    
+    # user inputs API key
+    api_key = input("Enter your FRED API key: ").strip()
+    
+    if not api_key:
+        logger.error("No API key provided. Exiting.")
+        raise ValueError("API key cannot be empty.")
+    
+    # Testing API key to ensure validity
+    logger.info("Validating API key...")
+    try:
+        test_url = "https://api.stlouisfed.org/fred/series/observations"
+        test_params = {
+            "series_id": "UNRATE",
+            "api_key": api_key,
+            "file_type": "json",
+            "observation_start": "2019-01-01",
+            "observation_end": "2019-01-31"
+        }
+        response = requests.get(test_url, params=test_params)
+        response.raise_for_status()
+        logger.info("API key validated successfully.")
+        return api_key
+    
+    except requests.exceptions.HTTPError as e:
+        if response.status_code == 400:
+            logger.error("Invalid API key. Please check and try again.")
+            raise ValueError("Invalid FRED API key.") from e
+        else:
+            logger.error(f"API validation failed: {e}")
+            raise
+
+# ============================================================
+# STATE MAPPINGS
+# ============================================================
+
+# states numerically encoded, mapping for clarity in data output
+STATE_FIPS = {
     "AL": "01", "AK": "02", "AZ": "04", "AR": "05", "CA": "06",
     "CO": "08", "CT": "09", "DE": "10", "FL": "12", "GA": "13",
     "HI": "15", "ID": "16", "IL": "17", "IN": "18", "IA": "19",
@@ -44,89 +79,261 @@ state_fips = {
 }
 
 # ============================================================
+# CORE FRED PULL FUNCTION
+# ============================================================
+BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
+
+def get_fred_annual(series_id, api_key, start="2010-01-01", end="2019-12-31", max_retries=3):
+    """
+    Pull a single FRED series and return annual averages.
+    
+    Args:
+        series_id: FRED series identifier
+        api_key: FRED API key
+        start: start date for observations
+        end: end date for observations
+        max_retries: number of retry attempts for server errors
+    
+    Returns:
+        DataFrame with year and value columns, or None if failed
+    """
+    for attempt in range(max_retries):
+        try:
+            params = {
+                "series_id": series_id,
+                "api_key": api_key,
+                "file_type": "json",
+                "observation_start": start,
+                "observation_end": end
+            }
+            
+            response = requests.get(BASE_URL, params=params)
+            response.raise_for_status()
+            
+            # parsing response
+            observations = response.json()["observations"]
+            
+            if not observations:
+                logger.warning(f"No observations returned for {series_id}")
+                return None
+            
+            df = pd.DataFrame(observations)
+            df["value"] = pd.to_numeric(df["value"], errors="coerce")
+            df["year"] = pd.to_datetime(df["date"]).dt.year
+            annual = df.groupby("year")["value"].mean().reset_index()
+            
+            logger.debug(f"Successfully pulled {series_id}: {len(annual)} years")
+            return annual
+        
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 500:
+                logger.warning(f"Server error for {series_id}, retry {attempt + 1}/{max_retries}")
+                time.sleep(2 * (attempt + 1))  # Increasing backoff
+                continue
+            elif response.status_code == 400:
+                logger.error(f"Bad request for series {series_id} — series ID may not exist")
+                return None
+            elif response.status_code == 429:
+                logger.warning(f"Rate limited. Waiting 60 seconds...")
+                time.sleep(60)
+                continue
+            else:
+                logger.error(f"HTTP error for {series_id}: {e}")
+                return None
+        
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Connection error for {series_id}: {e}")
+            time.sleep(5)
+            continue
+        
+        except Exception as e:
+            logger.error(f"Unexpected error for {series_id}: {e}")
+            return None
+    
+    logger.error(f"Failed after {max_retries} retries: {series_id}")
+    return None
+
+def extract_year_value(df, year):
+    """Extract a value for a given year from a FRED annual DataFrame."""
+    if df is None:
+        return None
+    matches = df[df["year"] == year]["value"]
+    if len(matches) == 0:
+        return None
+    return round(float(matches.values[0]), 4)
+
+# ============================================================
 # PULL STATE-LEVEL DATA
 # ============================================================
-
-state_data = {}
-
-for state, fips in state_fips.items():
-    print(f"Pulling data for {state}...")
+def pull_state_data(api_key):
+    """Pull all state-level economic indicators from FRED."""
     
-    try:
-        unemployment = get_fred_annual(f"{state}UR")
-        median_income = get_fred_annual(f"MEHOINUS{fips}A672N")
-        per_capita_income = get_fred_annual(f"{state}PCPI")
-        state_gdp = get_fred_annual(f"{state}NGSP")
-        nonfarm_employment = get_fred_annual(f"{state}NA")
+    state_data = {}
+    failed_series = []
+    total_states = len(STATE_FIPS)
+    
+    for i, (state, fips) in enumerate(STATE_FIPS.items(), 1):
+        logger.info(f"Pulling state data for {state} ({i}/{total_states})")
         
+        # Define series for this state
+        series = {
+            "state_unemployment": f"{state}UR",
+            "state_median_income": f"MEHOINUS{state}A672N",
+            "state_per_capita_income": f"{state}PCPI",
+            "state_gdp": f"{state}NGSP",
+            "state_nonfarm_employment": f"{state}NA",
+        }
+        
+        # Pull each series
+        results = {}
+        for name, series_id in series.items():
+            result = get_fred_annual(series_id, api_key)
+            results[name] = result
+            
+            if result is None:
+                failed_series.append({"state": state, "series": name, "series_id": series_id})
+                logger.warning(f"  Missing: {name} ({series_id})")
+            
+            time.sleep(1)
+        
+        # Build rows for each year
         for year in range(2010, 2020):
-            key = (state, year)
-            state_data[key] = {
+            state_data[(state, year)] = {
                 "state": state,
-                "year": year,
-                "state_unemployment": unemployment[unemployment["year"] == year]["value"].values[0] if year in unemployment["year"].values else None,
-                "state_median_income": median_income[median_income["year"] == year]["value"].values[0] if year in median_income["year"].values else None,
-                "state_per_capita_income": per_capita_income[per_capita_income["year"] == year]["value"].values[0] if year in per_capita_income["year"].values else None,
-                "state_gdp": state_gdp[state_gdp["year"] == year]["value"].values[0] if year in state_gdp["year"].values else None,
-                "state_nonfarm_employment": nonfarm_employment[nonfarm_employment["year"] == year]["value"].values[0] if year in nonfarm_employment["year"].values else None,
+                "year": year
             }
+            for name, result in results.items():
+                state_data[(state, year)][name] = extract_year_value(result, year)
         
-        time.sleep(1)  # Be nice to the API
-        
-    except Exception as e:
-        print(f"  ERROR for {state}: {e}")
+        time.sleep(1)  
 
-print(f"\nPulled data for {len(state_data)} (State, Year) pairs")
+    logger.info(f"State data collection complete. {len(failed_series)} series failed.")
+    
+    if failed_series:
+        logger.warning("Failed series summary:")
+        for f in failed_series:
+            logger.warning(f"  {f['state']}: {f['series']} ({f['series_id']})")
+    
+    return state_data, failed_series
 
 # ============================================================
 # PULL NATIONAL DATA
 # ============================================================
-
-print("Pulling national indicators...")
-
-national_unemployment = get_fred_annual("UNRATE")
-fed_funds = get_fred_annual("FEDFUNDS")
-cpi = get_fred_annual("CPIAUCSL")
-mortgage_30yr = get_fred_annual("MORTGAGE30US")
-consumer_confidence = get_fred_annual("UMCSENT")
-treasury_10yr = get_fred_annual("DGS10")
+def pull_national_data(api_key):
+    """Pull all national-level economic indicators from FRED."""
+    
+    logger.info("Pulling national indicators...")
+    
+    national_series = {
+        "national_unemployment": "UNRATE",
+        "fed_funds_rate": "FEDFUNDS",
+        "cpi": "CPIAUCSL",
+        "mortgage_30yr": "MORTGAGE30US",
+        "consumer_confidence": "UMCSENT",
+        "treasury_10yr": "DGS10",
+    }
+    
+    # looping over national series and pulling data
+    results = {}
+    for name, series_id in national_series.items():
+        logger.info(f"  Pulling {name} ({series_id})")
+        result = get_fred_annual(series_id, api_key)
+        
+        if result is None:
+            logger.error(f"  FAILED: {name}")
+        else:
+            logger.info(f"  Success: {name} — {len(result)} years")
+        
+        results[name] = result
+        time.sleep(1)
+    
+    return results
 
 # ============================================================
 # BUILD COMPLETE LOOKUP TABLE
 # ============================================================
-
-fred_rows = []
-
-for (state, year), state_vals in state_data.items():
-    row = state_vals.copy()
+def build_lookup_table(state_data, national_data):
+    """Combine state and national data into a single lookup table."""
     
-    # Add national indicators
-    row["national_unemployment"] = national_unemployment[national_unemployment["year"] == year]["value"].values[0] if year in national_unemployment["year"].values else None
-    row["fed_funds_rate"] = fed_funds[fed_funds["year"] == year]["value"].values[0] if year in fed_funds["year"].values else None
-    row["cpi"] = cpi[cpi["year"] == year]["value"].values[0] if year in cpi["year"].values else None
-    row["mortgage_30yr"] = mortgage_30yr[mortgage_30yr["year"] == year]["value"].values[0] if year in mortgage_30yr["year"].values else None
-    row["consumer_confidence"] = consumer_confidence[consumer_confidence["year"] == year]["value"].values[0] if year in consumer_confidence["year"].values else None
-    row["treasury_10yr"] = treasury_10yr[treasury_10yr["year"] == year]["value"].values[0] if year in treasury_10yr["year"].values else None
+    logger.info("Building combined lookup table...")
     
-    fred_rows.append(row)
-
-fred_df = pd.DataFrame(fred_rows)
+    fred_rows = []
+    
+    for (state, year), state_vals in state_data.items():
+        row = state_vals.copy()
+        
+        # Add national indicators
+        for name, result in national_data.items():
+            row[name] = extract_year_value(result, year)
+        
+        fred_rows.append(row)
+    
+    fred_df = pd.DataFrame(fred_rows)
+    
+    # Engineer derived features
+    fred_df["unemployment_vs_national"] = (
+        fred_df["state_unemployment"] - fred_df["national_unemployment"]
+    )
+    
+    logger.info(f"Lookup table shape: {fred_df.shape}")
+    logger.info(f"Null counts:\n{fred_df.isnull().sum().to_string()}")
+    
+    return fred_df
 
 # ============================================================
-# ENGINEER DERIVED FEATURES
+# MAIN EXECUTION
 # ============================================================
+def main():
+    """Main execution flow for FRED data collection."""
+    
+    start_time = datetime.now()
+    logger.info("=" * 60)
+    logger.info("FRED DATA COLLECTION — START")
+    logger.info("=" * 60)
+    
+    try:
+        # Get user input for API key
+        api_key = get_api_key()
+        
+        # Pull state level data
+        state_data, failed_series = pull_state_data(api_key)
+        
+        # Pull national data
+        national_data = pull_national_data(api_key)
+        
+        # Build lookup table
+        fred_df = build_lookup_table(state_data, national_data)
+        
+        # Save results
+        output_path = "data/raw/fred_lookup.csv"
+        fred_df.to_csv(output_path, index=False)
+        logger.info(f"Saved lookup table to {output_path}")
+        
+        # Save failed series log for reference
+        if failed_series:
+            failed_df = pd.DataFrame(failed_series)
+            failed_df.to_csv("data/interim/fred_failed_series.csv", index=False)
+            logger.warning(f"Saved {len(failed_series)} failed series to fred_failed_series.csv")
+        
+        # Summary
+        elapsed = datetime.now() - start_time
+        logger.info("=" * 60)
+        logger.info("COLLECTION COMPLETE")
+        logger.info(f"  Rows: {len(fred_df)}")
+        logger.info(f"  Columns: {fred_df.shape[1]}")
+        logger.info(f"  Nulls: {fred_df.isnull().sum().sum()}")
+        logger.info(f"  Failed series: {len(failed_series)}")
+        logger.info(f"  Time elapsed: {elapsed}")
+        logger.info("=" * 60)
+        
+        return fred_df
+    
+    except ValueError as e:
+        logger.error(f"Configuration error: {e}")
+        raise
+    except Exception as e:
+        logger.critical(f"Unexpected failure: {e}", exc_info=True)
+        raise
 
-fred_df["unemployment_vs_national"] = fred_df["state_unemployment"] - fred_df["national_unemployment"]
-fred_df["real_interest_rate"] = fred_df["fed_funds_rate"] - ((fred_df["cpi"].pct_change()) * 100)
-
-# ============================================================
-# VERIFY
-# ============================================================
-
-print(f"\nFRED lookup table shape: {fred_df.shape}")
-print(f"Nulls:\n{fred_df.isnull().sum()}")
-print(f"\nSample rows:")
-print(fred_df.head(10))
-
-# Save for reference
-fred_df.to_csv("data/interim/fred_lookup.csv", index=False)
+if __name__ == "__main__":
+    fred_df = main()
