@@ -1,4 +1,5 @@
-# DS 4320 Project 2: Does State and National Economic Context Assist in Predicting Loan Default Risk for Small Businesses?
+# DS 4320 Project 2: Can Economic Indicators Improve Default Prediction?
+
 
 ### Executive Summary
 FILL IN
