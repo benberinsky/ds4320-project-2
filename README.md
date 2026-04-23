@@ -21,7 +21,7 @@ documented below.
 |:---|:---|
 | Name | Benjamin Berinsky |
 | NetID | tfu5hw |
-| DOI |[![DOI](https://zenodo.org/badge/1208755573.svg)](https://doi.org/10.5281/zenodo.19712819) |
+| DOI |[DOI](https://doi.org/10.5281/zenodo.19712819) |
 | Press Release | [Link](https://github.com/benberinsky/ds4320-project-2/blob/main/press_release.md) |
 | Pipeline | [Link](https://github.com/benberinsky/ds4320-project-2/blob/main/scripts/pipeline.ipynb) |
 | License | [MIT](https://github.com/benberinsky/ds4320-project-2/blob/main/LICENSE) |
