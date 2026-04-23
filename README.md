@@ -2,7 +2,17 @@
 
 
 ### Executive Summary
-FILL IN
+This repository contains all materials for an analysis of 
+the importance of general economic indicators for small business
+loan default risk prediction. The `data/` directory includes a subset 
+of the data files used for analysis. A majority of the data used is stored
+in MongoDB Atlas. The `scripts/` directory contains the data collection
+and cleaning in python file and jupyter notebook format, and analysis 
+pipeline in both Jupyter notebook and markdown formats. The `figures/`
+directory includes all visualizations produced by the pipeline. The 
+`press_release.md` markdown file presents the key findings in a 
+newspaper-like tone. Further background on the project and data is 
+documented below.
 
 <br>
 
@@ -11,8 +21,8 @@ FILL IN
 |:---|:---|
 | Name | Benjamin Berinsky |
 | NetID | tfu5hw |
-| DOI | [fill in](add link) |
-| Press Release | [ADD LINK](ADD LINK) |
+| DOI |[![DOI](https://zenodo.org/badge/1208755573.svg)](https://doi.org/10.5281/zenodo.19712819) |
+| Press Release | [Link](https://github.com/benberinsky/ds4320-project-2/blob/main/press_release.md) |
 | Pipeline | [Link](https://github.com/benberinsky/ds4320-project-2/blob/main/scripts/pipeline.ipynb) |
 | License | [MIT](https://github.com/benberinsky/ds4320-project-2/blob/main/LICENSE) |
 
@@ -33,7 +43,7 @@ My initial general problem statement identifies the project domain as generally 
 
 
 ### Press Release: 
-[**NEED TO ADD**](ADD LINK HERE)
+[**Where Your Borrower Does Business Matters More Than You Think**](https://github.com/benberinsky/ds4320-project-2/blob/main/press_release.md)
 
 ## Domain Exposition
 
